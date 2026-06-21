@@ -3,7 +3,7 @@
  * Plugin Name: Zibll 商城迁移助手
  * Plugin URI: https://www.maotk.com/
  * Description: 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
- * Version: 6.1.1
+ * Version: 6.1.2
  * Author: Mao TK
  * Author URI: https://www.maotk.com/
  * Requires at least: 5.8
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MaoTK_Zibll_Shop_Migrator {
-	const VERSION            = '6.1.1';
+	const VERSION            = '6.1.2';
 	const PAGE               = 'maotk-zibll-shop-migrator';
 	const BRAND_URL          = 'https://www.maotk.com/';
 	const BRAND_LOGO         = 'https://www.maotk.com/wp-content/uploads/maotk-favicon.svg';
@@ -357,8 +357,7 @@ final class MaoTK_Zibll_Shop_Migrator {
 						pEta.textContent = '预计剩余：0 秒';
 						enableClose();
 						pTitle.textContent = '导出完成';
-						pText.textContent = '已导出 ' + count + ' 个商品，浏览器应已开始下载。';
-						setTimeout(() => overlay.style.display = 'none', 2600);
+						pText.textContent = '已导出 ' + count + ' 个商品，浏览器应已开始下载。请点击关闭按钮。';
 					}
 				}, 700);
 			});

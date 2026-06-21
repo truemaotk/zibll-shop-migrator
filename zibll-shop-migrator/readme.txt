@@ -3,7 +3,7 @@ Contributors: maotk
 Tags: zibll, shop, products, migration, images
 Requires at least: 5.8
 Requires PHP: 7.4
-Stable tag: 6.1.1
+Stable tag: 6.1.2
 License: GPLv2 or later
 
 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
@@ -36,6 +36,11 @@ License: GPLv2 or later
 * 插件不迁移订单、用户余额、支付记录或用户账号。
 
 == 更新记录 ==
+
+= 6.1.2 =
+
+* 完成窗口不再自动关闭。
+* 完成后持续显示结果，必须手动点击“关闭”或右上角“×”。
 
 = 6.1.1 =
 
