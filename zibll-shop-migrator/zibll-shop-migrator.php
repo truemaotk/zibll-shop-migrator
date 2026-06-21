@@ -3,7 +3,7 @@
  * Plugin Name: Zibll 商城迁移助手
  * Plugin URI: https://www.maotk.com/
  * Description: 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
- * Version: 6.0.0
+ * Version: 6.1.0
  * Author: Mao TK
  * Author URI: https://www.maotk.com/
  * Requires at least: 5.8
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MaoTK_Zibll_Shop_Migrator {
-	const VERSION            = '6.0.0';
+	const VERSION            = '6.1.0';
 	const PAGE               = 'maotk-zibll-shop-migrator';
 	const BRAND_URL          = 'https://www.maotk.com/';
 	const BRAND_LOGO         = 'https://www.maotk.com/wp-content/uploads/maotk-favicon.svg';
@@ -33,6 +33,7 @@ final class MaoTK_Zibll_Shop_Migrator {
 		add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
 		add_action( 'admin_post_maotk_zsm_export', array( __CLASS__, 'export' ) );
 		add_action( 'admin_post_maotk_zsm_import', array( __CLASS__, 'import' ) );
+		add_action( 'wp_ajax_maotk_zsm_progress', array( __CLASS__, 'ajax_progress' ) );
 		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
 	}
 
@@ -59,6 +60,36 @@ final class MaoTK_Zibll_Shop_Migrator {
 		}
 	}
 
+	public static function ajax_progress() {
+		self::require_access();
+		check_ajax_referer( 'maotk_zsm_progress', 'nonce' );
+		$token = isset( $_POST['token'] ) ? sanitize_key( wp_unslash( $_POST['token'] ) ) : '';
+		$data  = $token ? get_transient( self::progress_key( $token ) ) : false;
+		wp_send_json_success( $data ? $data : array( 'status' => 'pending' ) );
+	}
+
+	private static function progress_key( $token ) {
+		return 'maotk_zsm_progress_' . get_current_user_id() . '_' . $token;
+	}
+
+	private static function set_progress( $token, $completed, $total, $stage, $current = '', $status = 'running' ) {
+		if ( ! $token ) return;
+		$old = get_transient( self::progress_key( $token ) );
+		set_transient(
+			self::progress_key( $token ),
+			array(
+				'status' => $status,
+				'completed' => max( 0, (int) $completed ),
+				'total' => max( 1, (int) $total ),
+				'stage' => sanitize_text_field( $stage ),
+				'current' => sanitize_text_field( $current ),
+				'started_at' => is_array( $old ) && ! empty( $old['started_at'] ) ? (float) $old['started_at'] : microtime( true ),
+				'updated_at' => microtime( true ),
+			),
+			HOUR_IN_SECONDS
+		);
+	}
+
 	public static function render_page() {
 		self::require_access();
 		$products     = get_posts(
@@ -72,6 +103,8 @@ final class MaoTK_Zibll_Shop_Migrator {
 		);
 		$counts       = wp_count_posts( self::POST_TYPE, 'readable' );
 		$export_token = wp_generate_password( 20, false, false );
+		$import_token = wp_generate_password( 20, false, false );
+		$progress_nonce = wp_create_nonce( 'maotk_zsm_progress' );
 
 		if ( ! post_type_exists( self::POST_TYPE ) ) {
 			echo '<div class="notice notice-error"><p>当前网站没有注册 <code>shop_product</code> 商品类型。请先启用包含 Zibll 商城功能的主题或插件。</p></div>';
@@ -157,6 +190,7 @@ final class MaoTK_Zibll_Shop_Migrator {
 				<h2>第二步：在新网站导入</h2>
 				<form id="maotk-zsm-import-form" method="post" enctype="multipart/form-data" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 					<input type="hidden" name="action" value="maotk_zsm_import">
+					<input type="hidden" name="progress_token" value="<?php echo esc_attr( $import_token ); ?>">
 					<?php wp_nonce_field( 'maotk_zsm_import' ); ?>
 					<p><input type="file" name="migration_package" accept=".zip,application/zip" required></p>
 					<p>
@@ -176,7 +210,8 @@ final class MaoTK_Zibll_Shop_Migrator {
 				<div style="width:min(580px,calc(100vw - 40px));background:#fff;border-radius:8px;padding:24px;box-shadow:0 12px 50px rgba(0,0,0,.28)">
 					<h2 id="maotk-zsm-progress-title" style="margin-top:0">正在处理</h2>
 					<p id="maotk-zsm-progress-text">请不要关闭页面。</p>
-					<div style="height:18px;background:#e5e7eb;border-radius:999px;overflow:hidden"><div id="maotk-zsm-progress-bar" style="height:100%;width:3%;background:#2271b1;border-radius:999px;transition:width .6s ease"></div></div>
+					<div style="height:18px;background:#e5e7eb;border-radius:999px;overflow:hidden"><div id="maotk-zsm-progress-bar" style="height:100%;width:0;background:#2271b1;border-radius:999px;transition:width .35s ease"></div></div>
+					<p style="display:flex;justify-content:space-between;margin:10px 0 0"><strong id="maotk-zsm-progress-percent">0%</strong><span id="maotk-zsm-progress-eta">预计剩余：计算中</span></p>
 					<p id="maotk-zsm-progress-time" style="color:#646970;margin-bottom:0">已用时：0 秒</p>
 				</div>
 			</div>
@@ -193,7 +228,13 @@ final class MaoTK_Zibll_Shop_Migrator {
 			const pText = document.getElementById('maotk-zsm-progress-text');
 			const pBar = document.getElementById('maotk-zsm-progress-bar');
 			const pTime = document.getElementById('maotk-zsm-progress-time');
+			const pPercent = document.getElementById('maotk-zsm-progress-percent');
+			const pEta = document.getElementById('maotk-zsm-progress-eta');
+			const ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+			const progressNonce = <?php echo wp_json_encode( $progress_nonce ); ?>;
 			let timer = null;
+			let progressPoll = null;
+			let startedAt = 0;
 
 			function updateCount() {
 				count.textContent = '已选择 ' + checks.filter(c => c.checked).length + ' / ' + checks.length + ' 个商品';
@@ -227,19 +268,46 @@ final class MaoTK_Zibll_Shop_Migrator {
 			function clearCookie(name) {
 				document.cookie = name + '=; Max-Age=0; path=<?php echo esc_js( COOKIEPATH ? COOKIEPATH : '/' ); ?>; SameSite=Lax';
 			}
-			function startProgress(mode) {
-				let seconds = 0, percent = 3;
+			function formatDuration(seconds) {
+				seconds = Math.max(0, Math.round(seconds));
+				if (seconds < 60) return seconds + ' 秒';
+				const minutes = Math.floor(seconds / 60), remain = seconds % 60;
+				if (minutes < 60) return minutes + ' 分 ' + remain + ' 秒';
+				return Math.floor(minutes / 60) + ' 小时 ' + (minutes % 60) + ' 分';
+			}
+			async function readProgress(token) {
+				try {
+					const body = new URLSearchParams({action:'maotk_zsm_progress',nonce:progressNonce,token:token});
+					const response = await fetch(ajaxUrl,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body.toString()});
+					const json = await response.json();
+					if (!json.success || !json.data || json.data.status === 'pending') return;
+					const data = json.data, total = Math.max(1, Number(data.total)||1), completed = Math.max(0, Number(data.completed)||0);
+					const percent = data.status === 'finished' ? 100 : Math.min(99, Math.floor(completed / total * 100));
+					pBar.style.width = percent + '%';
+					pPercent.textContent = percent + '%（' + completed + ' / ' + total + '）';
+					pText.textContent = (data.stage || '正在处理') + (data.current ? '：' + data.current : '');
+					const elapsed = Math.max(1, Date.now()/1000 - (Number(data.started_at)||startedAt/1000));
+					const rate = completed / elapsed;
+					pEta.textContent = rate > 0 && completed < total ? '预计剩余：' + formatDuration((total-completed)/rate) : (completed >= total ? '预计剩余：0 秒' : '预计剩余：计算中');
+				} catch (error) {
+					pEta.textContent = '预计剩余：等待服务器进度';
+				}
+			}
+			function startProgress(mode, token) {
+				let seconds = 0;
+				startedAt = Date.now();
 				overlay.style.display = 'flex';
 				pTitle.textContent = mode === 'export' ? '正在导出商品' : '正在导入商品';
 				pText.textContent = mode === 'export' ? '正在收集商品、Meta、分类和图片并生成 ZIP。' : '正在写入商品、Meta、分类和媒体，请不要刷新页面。';
-				pBar.style.width = percent + '%';
+				pBar.style.width = '0%';
+				pPercent.textContent = '0%';
+				pEta.textContent = '预计剩余：计算中';
 				timer = setInterval(() => {
 					seconds++;
-					percent = Math.min(94, percent + (percent < 55 ? 1.8 : percent < 82 ? .7 : .2));
-					pBar.style.width = percent + '%';
-					pTime.textContent = '已用时：' + seconds + ' 秒';
-					if (seconds > 20) pText.textContent = '图片和商品较多时需要更长时间，服务器仍在处理中。';
+					pTime.textContent = '已用时：' + formatDuration(seconds);
 				}, 1000);
+				progressPoll = setInterval(() => readProgress(token), 800);
+				readProgress(token);
 			}
 			document.getElementById('maotk-zsm-export-form').addEventListener('submit', function (event) {
 				if (!checks.some(c => c.checked)) {
@@ -250,21 +318,25 @@ final class MaoTK_Zibll_Shop_Migrator {
 				const token = this.querySelector('[name="export_token"]').value;
 				const cookie = 'maotk_zsm_export_' + token;
 				clearCookie(cookie);
-				startProgress('export');
+				startProgress('export', token);
 				const poll = setInterval(() => {
 					const result = cookieValue(cookie);
 					if (result.indexOf('done-') === 0) {
 						clearInterval(poll);
 						clearCookie(cookie);
 						clearInterval(timer);
+						clearInterval(progressPoll);
 						pBar.style.width = '100%';
+						const count = parseInt(result.substring(5), 10) || 0;
+						pPercent.textContent = '100%（' + count + ' / ' + count + '）';
+						pEta.textContent = '预计剩余：0 秒';
 						pTitle.textContent = '导出完成';
-						pText.textContent = '已导出 ' + (parseInt(result.substring(5), 10) || 0) + ' 个商品，浏览器应已开始下载。';
+						pText.textContent = '已导出 ' + count + ' 个商品，浏览器应已开始下载。';
 						setTimeout(() => overlay.style.display = 'none', 2600);
 					}
 				}, 700);
 			});
-			document.getElementById('maotk-zsm-import-form').addEventListener('submit', () => startProgress('import'));
+			document.getElementById('maotk-zsm-import-form').addEventListener('submit', function () { startProgress('import', this.querySelector('[name="progress_token"]').value); });
 		}());
 		</script>
 		<?php
@@ -348,6 +420,10 @@ final class MaoTK_Zibll_Shop_Migrator {
 		}
 		$allowed_fields = array( 'meta', 'terms', 'media' );
 		$fields         = isset( $_POST['fields'] ) ? array_values( array_intersect( $allowed_fields, array_map( 'sanitize_key', (array) wp_unslash( $_POST['fields'] ) ) ) ) : array();
+		$progress_token = isset( $_POST['export_token'] ) ? sanitize_key( wp_unslash( $_POST['export_token'] ) ) : '';
+		$progress_total = max( 1, count( $product_ids ) );
+		$progress_done  = 0;
+		self::set_progress( $progress_token, 0, $progress_total, '正在准备商品数据' );
 		$tmp_zip        = wp_tempnam( 'zibll-shop-migration.zip' );
 		if ( ! $tmp_zip ) {
 			wp_die( '无法创建临时迁移包。' );
@@ -372,8 +448,11 @@ final class MaoTK_Zibll_Shop_Migrator {
 		foreach ( $product_ids as $product_id ) {
 			$post = get_post( $product_id );
 			if ( ! $post || self::POST_TYPE !== $post->post_type ) {
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导出商品', '无效商品 ID：' . $product_id );
 				continue;
 			}
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在打包商品、Meta 和图片', $post->post_title );
 			$raw_meta       = in_array( 'meta', $fields, true ) ? self::export_meta( $product_id ) : array();
 			$attachment_map = array();
 			$asset_urls     = array();
@@ -415,6 +494,8 @@ final class MaoTK_Zibll_Shop_Migrator {
 				'attachment_map' => $attachment_map,
 				'asset_urls'     => $asset_urls,
 			);
+			++$progress_done;
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在导出商品', $post->post_title );
 		}
 
 		$json = wp_json_encode( $manifest, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
@@ -424,7 +505,8 @@ final class MaoTK_Zibll_Shop_Migrator {
 			wp_die( '无法写入迁移清单。' );
 		}
 		$zip->close();
-		$token = isset( $_POST['export_token'] ) ? sanitize_key( wp_unslash( $_POST['export_token'] ) ) : '';
+		self::set_progress( $progress_token, $progress_total, $progress_total, '导出完成', '', 'finished' );
+		$token = $progress_token;
 		if ( $token ) {
 			setcookie(
 				'maotk_zsm_export_' . $token,
@@ -826,12 +908,21 @@ final class MaoTK_Zibll_Shop_Migrator {
 		$update_existing = ! empty( $_POST['update_existing'] );
 		$preserve_status = ! empty( $_POST['preserve_status'] );
 		$source_url      = isset( $manifest['source_url'] ) ? esc_url_raw( $manifest['source_url'] ) : '';
-		$asset_map       = in_array( 'media', $fields, true ) ? self::import_assets( $zip, $manifest['assets'], $result ) : array();
+		$progress_token  = isset( $_POST['progress_token'] ) ? sanitize_key( wp_unslash( $_POST['progress_token'] ) ) : '';
+		$asset_count     = in_array( 'media', $fields, true ) ? count( $manifest['assets'] ) : 0;
+		$progress_total  = max( 1, $asset_count + count( $manifest['products'] ) );
+		$progress_done   = 0;
+		self::set_progress( $progress_token, 0, $progress_total, '正在准备导入' );
+		$asset_map       = in_array( 'media', $fields, true ) ? self::import_assets( $zip, $manifest['assets'], $result, $progress_token, $progress_done, $progress_total ) : array();
 		$used_assets     = array();
 
 		foreach ( $manifest['products'] as $index => $item ) {
+			$current_title = is_array( $item ) && isset( $item['basic'] ) && is_array( $item['basic'] ) && ! empty( $item['basic']['post_title'] ) ? sanitize_text_field( $item['basic']['post_title'] ) : '第 ' . ( $index + 1 ) . ' 个商品';
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品、Meta 和分类', $current_title );
 			if ( ! is_array( $item ) || empty( $item['basic'] ) || ! is_array( $item['basic'] ) ) {
 				$result['failed_products'][] = array( 'title' => '第 ' . ( $index + 1 ) . ' 个商品', 'reason' => '商品数据格式无效' );
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品', $current_title );
 				continue;
 			}
 			$basic     = $item['basic'];
@@ -840,12 +931,16 @@ final class MaoTK_Zibll_Shop_Migrator {
 			$source_id = isset( $item['source_id'] ) ? (int) $item['source_id'] : 0;
 			if ( '' === $title ) {
 				$result['failed_products'][] = array( 'title' => '第 ' . ( $index + 1 ) . ' 个商品', 'reason' => '缺少商品标题' );
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品', $current_title );
 				continue;
 			}
 
 			$existing_id = self::find_existing_product( $source_url, $source_id, $slug );
 			if ( $existing_id && ! $update_existing ) {
 				++$result['skipped'];
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品', $title );
 				continue;
 			}
 
@@ -879,6 +974,8 @@ final class MaoTK_Zibll_Shop_Migrator {
 					'title'  => $title,
 					'reason' => is_wp_error( $post_id ) ? $post_id->get_error_message() : '数据库未返回商品 ID',
 				);
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品', $title );
 				continue;
 			}
 			update_post_meta( $post_id, self::SOURCE_META, self::source_key( $source_url, $source_id ) );
@@ -911,36 +1008,46 @@ final class MaoTK_Zibll_Shop_Migrator {
 			} else {
 				++$result['created'];
 			}
+			++$progress_done;
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品', $title );
 		}
 
 		self::cleanup_unused_assets( $asset_map, $used_assets );
 		$zip->close();
+		self::set_progress( $progress_token, $progress_total, $progress_total, '导入完成', '', 'finished' );
 		set_transient( 'maotk_zsm_result_' . get_current_user_id(), $result, 20 * MINUTE_IN_SECONDS );
 		wp_safe_redirect( admin_url( 'tools.php?page=' . self::PAGE ) );
 		exit;
 	}
 
-	private static function import_assets( ZipArchive $zip, $assets, &$result ) {
+	private static function import_assets( ZipArchive $zip, $assets, &$result, $progress_token, &$progress_done, $progress_total ) {
 		$map = array();
 		foreach ( $assets as $old_url => $asset ) {
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品图片', wp_basename( (string) wp_parse_url( $old_url, PHP_URL_PATH ) ) );
 			$old_url = esc_url_raw( $old_url, array( 'http', 'https' ) );
 			if ( ! $old_url || ! is_array( $asset ) || empty( $asset['file'] ) ) {
 				if ( $old_url && ! empty( $asset['error'] ) ) {
 					$products = ! empty( $asset['products'] ) && is_array( $asset['products'] ) ? implode( '、', array_map( 'sanitize_text_field', $asset['products'] ) ) : '迁移包';
 					$result['failed_images'][] = array( 'product' => $products, 'url' => $old_url, 'reason' => '旧站导出时未能打包：' . sanitize_text_field( $asset['error'] ) );
 				}
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品图片', wp_basename( (string) wp_parse_url( $old_url, PHP_URL_PATH ) ) );
 				continue;
 			}
 			$imported = self::import_one_asset( $zip, $asset, $old_url );
 			if ( is_wp_error( $imported ) ) {
 				$products = ! empty( $asset['products'] ) && is_array( $asset['products'] ) ? implode( '、', array_map( 'sanitize_text_field', $asset['products'] ) ) : '迁移包';
 				$result['failed_images'][] = array( 'product' => $products, 'url' => $old_url, 'reason' => $imported->get_error_message() );
+				++$progress_done;
+				self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品图片', wp_basename( (string) wp_parse_url( $old_url, PHP_URL_PATH ) ) );
 				continue;
 			}
 			$map[ $old_url ] = $imported;
 			if ( ! empty( $imported['created'] ) ) {
 				++$result['images'];
 			}
+			++$progress_done;
+			self::set_progress( $progress_token, $progress_done, $progress_total, '正在导入商品图片', wp_basename( (string) wp_parse_url( $old_url, PHP_URL_PATH ) ) );
 		}
 		return $map;
 	}
