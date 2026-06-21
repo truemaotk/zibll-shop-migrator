@@ -3,7 +3,7 @@
  * Plugin Name: Zibll 商城迁移助手
  * Plugin URI: https://www.maotk.com/
  * Description: 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
- * Version: 6.1.0
+ * Version: 6.1.1
  * Author: Mao TK
  * Author URI: https://www.maotk.com/
  * Requires at least: 5.8
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MaoTK_Zibll_Shop_Migrator {
-	const VERSION            = '6.1.0';
+	const VERSION            = '6.1.1';
 	const PAGE               = 'maotk-zibll-shop-migrator';
 	const BRAND_URL          = 'https://www.maotk.com/';
 	const BRAND_LOGO         = 'https://www.maotk.com/wp-content/uploads/maotk-favicon.svg';
@@ -207,12 +207,14 @@ final class MaoTK_Zibll_Shop_Migrator {
 
 			<iframe name="maotk-zsm-download-frame" style="display:none" title="商品迁移包下载"></iframe>
 			<div id="maotk-zsm-progress" style="display:none;position:fixed;z-index:100000;inset:0;background:rgba(0,0,0,.48);align-items:center;justify-content:center">
-				<div style="width:min(580px,calc(100vw - 40px));background:#fff;border-radius:8px;padding:24px;box-shadow:0 12px 50px rgba(0,0,0,.28)">
+				<div style="position:relative;width:min(580px,calc(100vw - 40px));background:#fff;border-radius:8px;padding:24px;box-shadow:0 12px 50px rgba(0,0,0,.28)">
+					<button type="button" id="maotk-zsm-progress-close-x" aria-label="关闭" style="display:none;position:absolute;right:14px;top:12px;border:0;background:transparent;font-size:25px;line-height:1;cursor:pointer;color:#646970">&times;</button>
 					<h2 id="maotk-zsm-progress-title" style="margin-top:0">正在处理</h2>
 					<p id="maotk-zsm-progress-text">请不要关闭页面。</p>
 					<div style="height:18px;background:#e5e7eb;border-radius:999px;overflow:hidden"><div id="maotk-zsm-progress-bar" style="height:100%;width:0;background:#2271b1;border-radius:999px;transition:width .35s ease"></div></div>
 					<p style="display:flex;justify-content:space-between;margin:10px 0 0"><strong id="maotk-zsm-progress-percent">0%</strong><span id="maotk-zsm-progress-eta">预计剩余：计算中</span></p>
 					<p id="maotk-zsm-progress-time" style="color:#646970;margin-bottom:0">已用时：0 秒</p>
+					<p id="maotk-zsm-progress-actions" style="display:none;text-align:right;margin:18px 0 0"><button type="button" class="button button-primary" id="maotk-zsm-progress-close">关闭</button></p>
 				</div>
 			</div>
 		</div>
@@ -230,11 +232,27 @@ final class MaoTK_Zibll_Shop_Migrator {
 			const pTime = document.getElementById('maotk-zsm-progress-time');
 			const pPercent = document.getElementById('maotk-zsm-progress-percent');
 			const pEta = document.getElementById('maotk-zsm-progress-eta');
+			const closeX = document.getElementById('maotk-zsm-progress-close-x');
+			const closeButton = document.getElementById('maotk-zsm-progress-close');
+			const actions = document.getElementById('maotk-zsm-progress-actions');
 			const ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 			const progressNonce = <?php echo wp_json_encode( $progress_nonce ); ?>;
 			let timer = null;
 			let progressPoll = null;
 			let startedAt = 0;
+			let activeMode = '';
+
+			function closeProgress() {
+				overlay.style.display = 'none';
+				clearInterval(timer);
+				clearInterval(progressPoll);
+			}
+			function enableClose() {
+				closeX.style.display = 'block';
+				actions.style.display = 'block';
+			}
+			closeX.addEventListener('click', closeProgress);
+			closeButton.addEventListener('click', closeProgress);
 
 			function updateCount() {
 				count.textContent = '已选择 ' + checks.filter(c => c.checked).length + ' / ' + checks.length + ' 个商品';
@@ -289,6 +307,10 @@ final class MaoTK_Zibll_Shop_Migrator {
 					const elapsed = Math.max(1, Date.now()/1000 - (Number(data.started_at)||startedAt/1000));
 					const rate = completed / elapsed;
 					pEta.textContent = rate > 0 && completed < total ? '预计剩余：' + formatDuration((total-completed)/rate) : (completed >= total ? '预计剩余：0 秒' : '预计剩余：计算中');
+					if (data.status === 'finished') {
+						pTitle.textContent = activeMode === 'export' ? '导出完成' : '导入完成';
+						enableClose();
+					}
 				} catch (error) {
 					pEta.textContent = '预计剩余：等待服务器进度';
 				}
@@ -296,7 +318,10 @@ final class MaoTK_Zibll_Shop_Migrator {
 			function startProgress(mode, token) {
 				let seconds = 0;
 				startedAt = Date.now();
+				activeMode = mode;
 				overlay.style.display = 'flex';
+				closeX.style.display = 'none';
+				actions.style.display = 'none';
 				pTitle.textContent = mode === 'export' ? '正在导出商品' : '正在导入商品';
 				pText.textContent = mode === 'export' ? '正在收集商品、Meta、分类和图片并生成 ZIP。' : '正在写入商品、Meta、分类和媒体，请不要刷新页面。';
 				pBar.style.width = '0%';
@@ -330,6 +355,7 @@ final class MaoTK_Zibll_Shop_Migrator {
 						const count = parseInt(result.substring(5), 10) || 0;
 						pPercent.textContent = '100%（' + count + ' / ' + count + '）';
 						pEta.textContent = '预计剩余：0 秒';
+						enableClose();
 						pTitle.textContent = '导出完成';
 						pText.textContent = '已导出 ' + count + ' 个商品，浏览器应已开始下载。';
 						setTimeout(() => overlay.style.display = 'none', 2600);
