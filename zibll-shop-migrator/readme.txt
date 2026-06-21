@@ -3,7 +3,7 @@ Contributors: maotk
 Tags: zibll, shop, products, migration, images
 Requires at least: 5.8
 Requires PHP: 7.4
-Stable tag: 6.1.2
+Stable tag: 6.1.3
 License: GPLv2 or later
 
 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
@@ -36,6 +36,12 @@ License: GPLv2 or later
 * 插件不迁移订单、用户余额、支付记录或用户账号。
 
 == 更新记录 ==
+
+= 6.1.3 =
+
+* 修复安全清理后的 SVG 仍被 WordPress MIME 白名单拒绝的问题。
+* 仅在写入当前迁移 SVG 时临时允许 image/svg+xml，不会永久开放全站 SVG 上传。
+* 增强带 DOCTYPE、HTML 实体或额外前后内容的非标准 SVG 兼容性。
 
 = 6.1.2 =
 

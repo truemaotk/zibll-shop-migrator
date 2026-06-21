@@ -8,7 +8,7 @@
 
 最新可安装版本：
 
-[`dist/zibll-shop-migrator-6.1.2.zip`](dist/zibll-shop-migrator-6.1.2.zip)
+[`dist/zibll-shop-migrator-6.1.3.zip`](dist/zibll-shop-migrator-6.1.3.zip)
 
 ## 主要功能
 
@@ -266,6 +266,10 @@ SVG 会移除：
 - 外部资源
 - iframe、object、embed
 - 动画和危险样式
+
+WordPress 默认不允许 SVG 上传。插件只会在写入当前已经安全清理的迁移 SVG 时临时允许 `image/svg+xml`，处理完成后立即移除放行规则，不会永久开放网站的普通 SVG 上传。
+
+同时兼容部分带有额外前后内容、DOCTYPE 或常见 HTML 实体的非标准 SVG。
 
 相同图片会按 SHA-256 哈希复用。
 

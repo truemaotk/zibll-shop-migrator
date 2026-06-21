@@ -3,7 +3,7 @@
  * Plugin Name: Zibll 商城迁移助手
  * Plugin URI: https://www.maotk.com/
  * Description: 安全迁移 Zibll 商城商品、完整多值 Meta、分类层级、特色图、正文图片和 Meta 图片。
- * Version: 6.1.2
+ * Version: 6.1.3
  * Author: Mao TK
  * Author URI: https://www.maotk.com/
  * Requires at least: 5.8
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MaoTK_Zibll_Shop_Migrator {
-	const VERSION            = '6.1.2';
+	const VERSION            = '6.1.3';
 	const PAGE               = 'maotk-zibll-shop-migrator';
 	const BRAND_URL          = 'https://www.maotk.com/';
 	const BRAND_LOGO         = 'https://www.maotk.com/wp-content/uploads/maotk-favicon.svg';
@@ -829,6 +829,18 @@ final class MaoTK_Zibll_Shop_Migrator {
 		if ( ! class_exists( 'DOMDocument' ) ) {
 			return new WP_Error( 'svg_dom_missing', '服务器缺少 DOM 扩展，无法安全处理 SVG' );
 		}
+		$start = stripos( $svg, '<svg' );
+		$end   = strripos( $svg, '</svg>' );
+		if ( false === $start || false === $end || $end < $start ) {
+			return new WP_Error( 'invalid_svg', 'SVG 文件缺少有效的 svg 根元素' );
+		}
+		$svg = substr( $svg, $start, $end + 6 - $start );
+		$svg = preg_replace( '/<!DOCTYPE[^>]*(?:\[[\s\S]*?\]\s*)?>/i', '', $svg );
+		$svg = str_replace(
+			array( '&nbsp;', '&copy;', '&reg;', '&trade;' ),
+			array( '&#160;', '&#169;', '&#174;', '&#8482;' ),
+			$svg
+		);
 		$previous = libxml_use_internal_errors( true );
 		$dom      = new DOMDocument();
 		$loaded   = $dom->loadXML( $svg, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING );
@@ -870,6 +882,11 @@ final class MaoTK_Zibll_Shop_Migrator {
 		}
 		$clean = $dom->saveXML( $dom->documentElement );
 		return $clean ? $clean : new WP_Error( 'svg_save_failed', '无法保存清理后的 SVG' );
+	}
+
+	public static function allow_migration_svg_mime( $mimes ) {
+		$mimes['svg'] = 'image/svg+xml';
+		return $mimes;
 	}
 
 	public static function import() {
@@ -1124,7 +1141,13 @@ final class MaoTK_Zibll_Shop_Migrator {
 		$base     = sanitize_file_name( pathinfo( (string) wp_parse_url( $old_url, PHP_URL_PATH ), PATHINFO_FILENAME ) );
 		$base     = $base ? $base : 'product-image';
 		$filename = $base . '-' . substr( $hash, 0, 8 ) . '.' . $type['extension'];
-		$upload   = wp_upload_bits( $filename, null, $bytes );
+		if ( 'image/svg+xml' === $type['mime'] ) {
+			add_filter( 'upload_mimes', array( __CLASS__, 'allow_migration_svg_mime' ) );
+		}
+		$upload = wp_upload_bits( $filename, null, $bytes );
+		if ( 'image/svg+xml' === $type['mime'] ) {
+			remove_filter( 'upload_mimes', array( __CLASS__, 'allow_migration_svg_mime' ) );
+		}
 		if ( ! empty( $upload['error'] ) ) {
 			return new WP_Error( 'upload_failed', $upload['error'] );
 		}
